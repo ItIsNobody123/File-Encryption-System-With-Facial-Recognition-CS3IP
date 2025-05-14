@@ -151,111 +151,80 @@ class FileEncryptor:
     def __init__(self, test_files_dir="test_files"):
         self.test_files_dir = test_files_dir
         self.key_file = "encryption_key.key"
-        self.key = None  # Key is not loaded into memory initially
         
-        # Create directory if it doesn't exist
         if not os.path.exists(self.test_files_dir):
             os.makedirs(self.test_files_dir)
     
-    def load_key(self):
-        """
-        Load the encryption key into memory. This should only be called when a recognized face is detected.
-        """
+    def get_cipher(self):
         if os.path.exists(self.key_file):
             with open(self.key_file, 'rb') as file:
-                self.key = file.read()
-                self.cipher = Fernet(self.key)
-                print("Encryption key loaded into memory.")
-        else:
-            print("Encryption key file not found.")
-    
-    def clear_key_from_memory(self):
-        """
-        Clear the encryption key from memory.
-        """
-        self.key = None
-        self.cipher = None
-        print("Encryption key cleared from memory.")
+                return Fernet(file.read())
+        return None
     
     def encrypt_files(self):
-        if not self.key:
-            print("Encryption key not loaded. Cannot encrypt files.")
+        cipher = self.get_cipher()
+        if not cipher:
             return
         
-        print("Security alert! Encrypting files...")
-        
-        # Check if files are already encrypted
         all_files = os.listdir(self.test_files_dir)
         unencrypted_files = [f for f in all_files if not f.endswith('.encrypted')]
         
         if not unencrypted_files:
-            print("All files are already encrypted.")
             return
             
-        # Encrypt all unencrypted files
         for filename in unencrypted_files:
             file_path = os.path.join(self.test_files_dir, filename)
             
-            # Skip if it's a directory
             if os.path.isdir(file_path):
                 continue
                 
             try:
-                # Read file content
                 with open(file_path, 'rb') as file:
                     file_data = file.read()
                 
-                # Encrypt data
-                encrypted_data = self.cipher.encrypt(file_data)
+                encrypted_data = cipher.encrypt(file_data)
                 
-                # Write encrypted data
                 encrypted_file_path = file_path + '.encrypted'
                 with open(encrypted_file_path, 'wb') as file:
                     file.write(encrypted_data)
                 
-                # Remove original file
                 os.remove(file_path)
-                print(f"Encrypted: {filename}")
                 
             except Exception as e:
                 print(f"Error encrypting {filename}: {e}")
         
-        # Clear the key from memory after encryption
-        self.clear_key_from_memory()
+        print("Files encrypted")
     
     def decrypt_files(self):
-        if not self.key:
-            print("Encryption key not loaded. Cannot decrypt files.")
+        cipher = self.get_cipher()
+        if not cipher:
             return
         
-        print("Recognized face detected! Decrypting files...")
-        
-        # Decrypt all files in the directory
+        encrypted_files = False
         for filename in os.listdir(self.test_files_dir):
             if not filename.endswith('.encrypted'):
                 continue
                 
+            encrypted_files = True
             encrypted_file_path = os.path.join(self.test_files_dir, filename)
-            original_file_path = encrypted_file_path[:-10]  # Remove '.encrypted'
+            original_file_path = encrypted_file_path[:-10]
             
             try:
-                # Read encrypted file
                 with open(encrypted_file_path, 'rb') as file:
                     encrypted_data = file.read()
                 
-                # Decrypt data
-                decrypted_data = self.cipher.decrypt(encrypted_data)
+                decrypted_data = cipher.decrypt(encrypted_data)
                 
-                # Write decrypted data
                 with open(original_file_path, 'wb') as file:
                     file.write(decrypted_data)
                 
-                # Remove encrypted file
                 os.remove(encrypted_file_path)
-                print(f"Decrypted: {filename}")
                 
             except Exception as e:
                 print(f"Error decrypting {filename}: {e}")
+        
+        if encrypted_files:
+            print("Files decrypted")
 
 class UserInterface:
     def __init__(self):
@@ -336,6 +305,7 @@ class FacialRecognitionSystem:
         # Performance optimization flags
         self.last_processed_time = time.time()
         
+        self.last_status = None  # Track last recognition status
         
     def register_face(self):
         passcode = self.ui.get_admin_passcode()
@@ -411,21 +381,10 @@ class FacialRecognitionSystem:
         
         last_process_time = time.time()
         fps = 0
+        recognition_results = []  # Initialize outside the loop
         
-        if background_mode:
-            cap.set(cv2.CAP_PROP_FPS, 10)  # Reduce FPS
-            self.process_every_n_frames = 5  # Process every 5th frame
-        else:
-            cap.set(cv2.CAP_PROP_FPS, 30)
-            self.process_every_n_frames = 2  # Process every other frame
-        
-        if background_mode:
-            print("\nRunning in background mode...")
-            print("Console indicator: [*] = Processing, [R] = Recognized face, [!] = No authorized face")
-            print("Press Ctrl+C to stop and return to menu\n")
-        else:
-            print("\nRunning in normal mode...")
-            print("Press 'q' to quit and return to menu\n")
+        print("\nRunning facial recognition...")
+        print("Press 'q' to quit and return to menu\n")
         
         try:
             while True:
@@ -434,73 +393,51 @@ class FacialRecognitionSystem:
                     print("Failed to grab frame")
                     break
                 
-                # Calculate FPS
                 current_time = time.time()
                 elapsed_time = current_time - last_process_time
                 if elapsed_time > 0:
                     fps = 1 / elapsed_time
                 last_process_time = current_time
                 
-                # Process only every n frames
                 self.frame_count += 1
-                process_this_frame = (self.frame_count % self.process_every_n_frames == 0)
-                
-                if process_this_frame:
-                    # Step 1: Detect faces
+                if (self.frame_count % self.process_every_n_frames == 0):
                     faces = self.face_detector.detect_faces(frame)
                     
-                    if len(faces) > 0:  # Proceed only if faces are detected
-                        # Step 2: Recognize faces
+                    if len(faces) > 0:
                         recognition_results = self.face_recognizer.recognize_faces(frame)
-                        
-                        # Check if any face is recognized
                         any_face_recognized = any(result['recognized'] for result in recognition_results)
                         
                         if any_face_recognized:
-                            # Load the encryption key into memory
-                            self.file_encryptor.load_key()
-                            
-                            encrypted_files_exist = any(f.endswith('.encrypted') for f in os.listdir(self.file_encryptor.test_files_dir))
-                            if encrypted_files_exist:
+                            if self.last_status != "recognized":
                                 self.file_encryptor.decrypt_files()
-                            if background_mode:
-                                print("[R]", end="", flush=True)  # Recognized face indicator
+                                self.last_status = "recognized"
                         else:
-                            # Clear the encryption key from memory
-                            self.file_encryptor.clear_key_from_memory()
-                            
-                            unencrypted_files_exist = any(not f.endswith('.encrypted') for f in os.listdir(self.file_encryptor.test_files_dir))
-                            if unencrypted_files_exist:
+                            if self.last_status != "unknown":
                                 self.file_encryptor.encrypt_files()
-                            if background_mode:
-                                print("[!]", end="", flush=True)  # Alert indicator
-                        
-                        # Display the frame in normal mode
-                        if not background_mode:
-                            display_frame = self.ui.draw_recognition_results(frame, recognition_results)
-                            cv2.putText(display_frame, f"FPS: {fps:.1f}", (display_frame.shape[1] - 120, 30), 
-                                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                            cv2.imshow('Facial Recognition Security', display_frame)
-                    else:
-                        if background_mode:
-                            print("[*]", end="", flush=True)  # No face detected indicator
+                                self.last_status = "unknown"
+                    
+                    if not background_mode and recognition_results:  # Only draw if we have results
+                        display_frame = self.ui.draw_recognition_results(frame, recognition_results)
+                        cv2.putText(display_frame, f"FPS: {fps:.1f}", (display_frame.shape[1] - 120, 30), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                        cv2.imshow('Facial Recognition Security', display_frame)
+                    elif not background_mode:  # If no results, show original frame with FPS
+                        cv2.putText(frame, f"FPS: {fps:.1f}", (frame.shape[1] - 120, 30),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                        cv2.imshow('Facial Recognition Security', frame)
                 
-                # Check for key press in normal mode
                 if not background_mode:
-                    key = cv2.waitKey(1) & 0xFF
-                    if key == ord('q'):
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
                         break
         
         except KeyboardInterrupt:
-            if background_mode:
-                print("\n\nKeyboard interrupt detected. Stopping background process...")
+            print("\nStopping...")
         
         finally:
             cap.release()
             if not background_mode:
                 cv2.destroyAllWindows()
             print("\nReturning to main menu...")
-    
     
     def close(self):
         self.db_manager.close()
